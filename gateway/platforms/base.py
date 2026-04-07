@@ -406,6 +406,10 @@ class MessageEvent:
     
     # Auto-loaded skill for topic/channel bindings (e.g., Telegram DM Topics)
     auto_skill: Optional[str] = None
+
+    # Per-channel system prompt override (e.g., Discord channel_overrides).
+    # Appended to the agent's combined ephemeral system prompt for the turn.
+    extra_system_prompt: Optional[str] = None
     
     # Timestamps
     timestamp: datetime = field(default_factory=datetime.now)

@@ -2909,6 +2909,7 @@ class GatewayRunner:
                 session_id=session_entry.session_id,
                 session_key=session_key,
                 event_message_id=event.message_id,
+                extra_system_prompt=getattr(event, "extra_system_prompt", None),
             )
 
             # Stop persistent typing indicator now that the agent is done
@@ -6274,6 +6275,7 @@ class GatewayRunner:
         session_key: str = None,
         _interrupt_depth: int = 0,
         event_message_id: Optional[str] = None,
+        extra_system_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Run the agent with the given message and context.
@@ -6592,6 +6594,12 @@ class GatewayRunner:
             combined_ephemeral = context_prompt or ""
             if self._ephemeral_system_prompt:
                 combined_ephemeral = (combined_ephemeral + "\n\n" + self._ephemeral_system_prompt).strip()
+            # Per-channel override (e.g., Discord channel_overrides) is appended
+            # last so it takes precedence in the prompt and feeds into the
+            # agent-config cache signature, giving each channel its own cached
+            # AIAgent automatically.
+            if extra_system_prompt:
+                combined_ephemeral = (combined_ephemeral + "\n\n" + extra_system_prompt).strip()
 
             # Re-read .env and config for fresh credentials (gateway is long-lived,
             # keys may change without restart).
@@ -7311,6 +7319,7 @@ class GatewayRunner:
                     session_id=session_id,
                     session_key=session_key,
                     _interrupt_depth=_interrupt_depth + 1,
+                    extra_system_prompt=extra_system_prompt,
                 )
         finally:
             # Stop progress sender, interrupt monitor, and notification task

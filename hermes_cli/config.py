@@ -490,6 +490,16 @@ DEFAULT_CONFIG = {
         "free_response_channels": "",  # Comma-separated channel IDs where bot responds without mention
         "auto_thread": True,           # Auto-create threads on @mention in channels (like Slack)
         "reactions": True,             # Add 👀/✅/❌ reactions to messages during processing
+        # Per-channel system prompt overrides.  Map of channel ID (string) to a
+        # dict with keys understood by the gateway, currently:
+        #   extra_system_prompt: appended to the agent's combined ephemeral
+        #     system prompt for every turn in that channel.
+        # Example:
+        #   channel_overrides:
+        #     "1485870805429649540":
+        #       extra_system_prompt: |
+        #         You are in #food. Auto-archive food/restaurant content.
+        "channel_overrides": {},
     },
 
     # WhatsApp platform settings (gateway mode)

@@ -455,6 +455,68 @@ class DiscordAdapter(BasePlatformAdapter):
         self._seen_messages: Dict[str, float] = {}
         self._SEEN_TTL = 300   # 5 minutes
         self._SEEN_MAX = 2000  # prune threshold
+        # Per-channel system prompt overrides loaded from
+        # discord.channel_overrides in ~/.hermes/config.yaml.  Keys are
+        # channel IDs as strings; values are dicts with at least
+        # ``extra_system_prompt``.
+        self._channel_overrides: Dict[str, dict] = {}
+
+    def _load_channel_overrides(self) -> None:
+        """Load per-channel system prompt overrides from config.yaml.
+
+        Reads ``discord.channel_overrides`` from the gateway config and
+        normalises channel-id keys to strings.  Malformed entries (non-dict
+        values) are skipped with a warning so a typo in the user's config
+        can't break Discord message handling.
+        """
+        try:
+            from gateway.run import _load_gateway_config
+        except Exception as exc:  # pragma: no cover - circular-import safety net
+            logger.debug("[%s] Could not import _load_gateway_config: %s", self.name, exc)
+            self._channel_overrides = {}
+            return
+
+        try:
+            cfg = _load_gateway_config() or {}
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("[%s] Failed to load gateway config for channel_overrides: %s", self.name, exc)
+            self._channel_overrides = {}
+            return
+
+        raw = (cfg.get("discord") or {}).get("channel_overrides") or {}
+        if not isinstance(raw, dict):
+            logger.warning(
+                "[%s] discord.channel_overrides must be a mapping, got %s — ignoring",
+                self.name, type(raw).__name__,
+            )
+            self._channel_overrides = {}
+            return
+
+        normalized: Dict[str, dict] = {}
+        for cid, value in raw.items():
+            if not isinstance(value, dict):
+                logger.warning(
+                    "[%s] discord.channel_overrides[%r] must be a mapping, got %s — skipping",
+                    self.name, cid, type(value).__name__,
+                )
+                continue
+            normalized[str(cid)] = value
+        self._channel_overrides = normalized
+        if normalized:
+            logger.info(
+                "[%s] Loaded %d Discord channel override(s)",
+                self.name, len(normalized),
+            )
+
+    def _resolve_channel_override(self, channel_ids: set) -> Optional[dict]:
+        """Return the first matching override dict for any of *channel_ids*."""
+        if not self._channel_overrides:
+            return None
+        for cid in channel_ids:
+            override = self._channel_overrides.get(cid)
+            if isinstance(override, dict):
+                return override
+        return None
 
     async def connect(self) -> bool:
         """Connect to Discord and start receiving events."""
@@ -490,6 +552,10 @@ class DiscordAdapter(BasePlatformAdapter):
         if not self.config.token:
             logger.error("[%s] No bot token configured", self.name)
             return False
+
+        # Load per-channel system prompt overrides from config.yaml.  Kept
+        # adjacent to where DISCORD_FREE_RESPONSE_CHANNELS is consumed.
+        self._load_channel_overrides()
 
         try:
             # Acquire scoped lock to prevent duplicate bot token usage
@@ -2207,6 +2273,16 @@ class DiscordAdapter(BasePlatformAdapter):
             thread_id = str(message.channel.id)
             parent_channel_id = self._get_parent_channel_id(message.channel)
 
+        # Compute the channel-id set up front so we can resolve both
+        # free-response gating and channel_overrides against the same view.
+        # For DMs, the only relevant id is the DM channel id itself.
+        channel_ids = {str(message.channel.id)}
+        if parent_channel_id:
+            channel_ids.add(parent_channel_id)
+
+        override = self._resolve_channel_override(channel_ids)
+        extra_system_prompt = (override or {}).get("extra_system_prompt") if isinstance(override, dict) else None
+
         if not isinstance(message.channel, discord.DMChannel):
             # Check ignored channels first - never respond even when mentioned
             ignored_channels_raw = os.getenv("DISCORD_IGNORED_CHANNELS", "")
@@ -2422,6 +2498,7 @@ class DiscordAdapter(BasePlatformAdapter):
             media_types=media_types,
             reply_to_message_id=str(message.reference.message_id) if message.reference else None,
             timestamp=message.created_at,
+            extra_system_prompt=extra_system_prompt,
         )
 
         # Track thread participation so the bot won't require @mention for
